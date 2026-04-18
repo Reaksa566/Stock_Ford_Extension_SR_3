@@ -1,3 +1,4 @@
+from github_sync import sync_db_to_github
 import sqlite3
 import os
 from datetime import datetime
@@ -83,6 +84,11 @@ def add_category(name):
     except sqlite3.IntegrityError:
         success = False
     conn.close()
+    
+    # Sync to GitHub if successful
+    if success:
+        sync_db_to_github()
+    
     return success
 
 def get_items():
@@ -124,6 +130,10 @@ def add_item(description, unit, stock_in, category_id, item_type='accessory'):
     conn.commit()
     item_id = cursor.lastrowid
     conn.close()
+    
+    # Sync to GitHub after adding item
+    sync_db_to_github()
+    
     return item_id
 
 def update_item(item_id, description, unit, category_id):
@@ -137,6 +147,9 @@ def update_item(item_id, description, unit, category_id):
     ''', (description, unit, category_id, item_id))
     conn.commit()
     conn.close()
+    
+    # Sync to GitHub after updating item
+    sync_db_to_github()
 
 def update_stock(item_id, quantity_change):
     """Update stock (positive for stock in, negative for stock out)"""
@@ -152,6 +165,9 @@ def update_stock(item_id, quantity_change):
     
     conn.commit()
     conn.close()
+    
+    # Sync to GitHub after updating stock
+    sync_db_to_github()
 
 def delete_item(item_id):
     """Delete an item"""
@@ -161,6 +177,9 @@ def delete_item(item_id):
     cursor.execute('DELETE FROM items WHERE id = ?', (item_id,))
     conn.commit()
     conn.close()
+    
+    # Sync to GitHub after deleting item
+    sync_db_to_github()
 
 def get_item_stock(item_id):
     """Get current total stock of an item"""
@@ -343,3 +362,6 @@ def update_item_type(item_id, item_type):
     cursor.execute('UPDATE items SET type = ? WHERE id = ?', (item_type, item_id))
     conn.commit()
     conn.close()
+    
+    # Sync to GitHub after updating item type
+    sync_db_to_github()

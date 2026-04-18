@@ -2,11 +2,22 @@ from flask import Flask, render_template, request, jsonify
 from flask_cors import CORS
 import database
 import sqlite3
+from github_sync import sync_db_from_github, sync_db_to_github
+import atexit
 
 app = Flask(__name__)
 CORS(app)
 
-# Initialize database
+# Download database from GitHub when app starts
+print("=" * 50)
+print("🔄 Checking for existing database on GitHub...")
+sync_db_from_github()
+print("=" * 50)
+
+# Upload database to GitHub when app shuts down
+atexit.register(sync_db_to_github)
+
+# Initialize database (this will create tables if they don't exist)
 database.init_db()
 
 @app.route('/')
