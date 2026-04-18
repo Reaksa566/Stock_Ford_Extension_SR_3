@@ -2,13 +2,29 @@ from github_sync import sync_db_to_github
 import sqlite3
 import os
 from datetime import datetime
+import hashlib
 
 DB_PATH = 'stock_data.db'
+
+def hash_password(password):
+    """Hash password using SHA-256"""
+    return hashlib.sha256(password.encode()).hexdigest()
 
 def init_db():
     """Initialize the database with tables if they don't exist"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
+    
+    # Create users table (for login)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password TEXT NOT NULL,
+            role TEXT DEFAULT 'user',
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
     
     # Create categories table (if not exists)
     cursor.execute('''
@@ -47,6 +63,17 @@ def init_db():
         )
     ''')
     
+    # Check if default admin user exists
+    cursor.execute('SELECT COUNT(*) FROM users WHERE username = ?', ('admin',))
+    admin_exists = cursor.fetchone()[0]
+    
+    if admin_exists == 0:
+        # Insert default admin user (password: admin123)
+        default_password = hash_password('admin123')
+        cursor.execute('INSERT INTO users (username, password, role) VALUES (?, ?, ?)', 
+                      ('admin', default_password, 'admin'))
+        print("Default admin user created: username='admin', password='admin123'")
+    
     # Check if categories table is empty before inserting default categories
     cursor.execute('SELECT COUNT(*) FROM categories')
     count = cursor.fetchone()[0]
@@ -63,6 +90,56 @@ def init_db():
     conn.commit()
     conn.close()
     print("Database initialized successfully!")
+
+def authenticate_user(username, password):
+    """Authenticate user"""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    hashed_password = hash_password(password)
+    cursor.execute('SELECT id, username, role FROM users WHERE username = ? AND password = ?', 
+                  (username, hashed_password))
+    user = cursor.fetchone()
+    conn.close()
+    
+    if user:
+        return {'id': user[0], 'username': user[1], 'role': user[2]}
+    return None
+
+def add_user(username, password, role='user'):
+    """Add a new user"""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    try:
+        hashed_password = hash_password(password)
+        cursor.execute('INSERT INTO users (username, password, role) VALUES (?, ?, ?)', 
+                      (username, hashed_password, role))
+        conn.commit()
+        success = True
+    except sqlite3.IntegrityError:
+        success = False
+    conn.close()
+    
+    if success:
+        sync_db_to_github()
+    return success
+
+def get_users():
+    """Get all users"""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('SELECT id, username, role, created_at FROM users')
+    users = cursor.fetchall()
+    conn.close()
+    return [{'id': u[0], 'username': u[1], 'role': u[2], 'created_at': u[3]} for u in users]
+
+def delete_user(user_id):
+    """Delete a user"""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('DELETE FROM users WHERE id = ? AND username != ?', (user_id, 'admin'))
+    conn.commit()
+    conn.close()
+    sync_db_to_github()
 
 def get_categories():
     """Get all categories"""
@@ -85,7 +162,6 @@ def add_category(name):
         success = False
     conn.close()
     
-    # Sync to GitHub if successful
     if success:
         sync_db_to_github()
     
@@ -131,9 +207,7 @@ def add_item(description, unit, stock_in, category_id, item_type='accessory'):
     item_id = cursor.lastrowid
     conn.close()
     
-    # Sync to GitHub after adding item
     sync_db_to_github()
-    
     return item_id
 
 def update_item(item_id, description, unit, category_id):
@@ -147,8 +221,6 @@ def update_item(item_id, description, unit, category_id):
     ''', (description, unit, category_id, item_id))
     conn.commit()
     conn.close()
-    
-    # Sync to GitHub after updating item
     sync_db_to_github()
 
 def update_stock(item_id, quantity_change):
@@ -157,16 +229,12 @@ def update_stock(item_id, quantity_change):
     cursor = conn.cursor()
     
     if quantity_change > 0:
-        # Stock IN
         cursor.execute('UPDATE items SET stock_in = stock_in + ? WHERE id = ?', (quantity_change, item_id))
     else:
-        # Stock OUT
         cursor.execute('UPDATE items SET stock_out = stock_out + ? WHERE id = ?', (abs(quantity_change), item_id))
     
     conn.commit()
     conn.close()
-    
-    # Sync to GitHub after updating stock
     sync_db_to_github()
 
 def delete_item(item_id):
@@ -177,8 +245,6 @@ def delete_item(item_id):
     cursor.execute('DELETE FROM items WHERE id = ?', (item_id,))
     conn.commit()
     conn.close()
-    
-    # Sync to GitHub after deleting item
     sync_db_to_github()
 
 def get_item_stock(item_id):
@@ -324,24 +390,19 @@ def get_dashboard_stats():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
-    # Total items
     cursor.execute('SELECT COUNT(*) FROM items')
     total_items = cursor.fetchone()[0]
     
-    # Total stock units
     cursor.execute('SELECT SUM(stock_in - stock_out) FROM items')
     total_stock_result = cursor.fetchone()[0]
     total_stock = total_stock_result if total_stock_result else 0
     
-    # Low stock items (less than 10)
     cursor.execute('SELECT COUNT(*) FROM items WHERE (stock_in - stock_out) < 10 AND (stock_in - stock_out) > 0')
     low_stock = cursor.fetchone()[0]
     
-    # Out of stock items
     cursor.execute('SELECT COUNT(*) FROM items WHERE (stock_in - stock_out) = 0')
     out_stock = cursor.fetchone()[0]
     
-    # Total categories
     cursor.execute('SELECT COUNT(*) FROM categories')
     total_categories = cursor.fetchone()[0]
     
@@ -362,6 +423,4 @@ def update_item_type(item_id, item_type):
     cursor.execute('UPDATE items SET type = ? WHERE id = ?', (item_type, item_id))
     conn.commit()
     conn.close()
-    
-    # Sync to GitHub after updating item type
     sync_db_to_github()

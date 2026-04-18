@@ -1,39 +1,113 @@
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, session, redirect, url_for
 from flask_cors import CORS
 import database
 import sqlite3
 from github_sync import sync_db_from_github, sync_db_to_github
 import atexit
+from functools import wraps
 
 app = Flask(__name__)
+app.secret_key = 'your-secret-key-change-this-in-production-2024'
 CORS(app)
 
-# Download database from GitHub when app starts
+def login_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'user_id' not in session:
+            return jsonify({'error': 'Login required'}), 401
+        return f(*args, **kwargs)
+    return decorated_function
+
+def admin_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if session.get('role') != 'admin':
+            return jsonify({'error': 'Admin access required'}), 403
+        return f(*args, **kwargs)
+    return decorated_function
+
 print("=" * 50)
 print("🔄 Checking for existing database on GitHub...")
 sync_db_from_github()
 print("=" * 50)
 
-# Upload database to GitHub when app shuts down
 atexit.register(sync_db_to_github)
-
-# Initialize database (this will create tables if they don't exist)
 database.init_db()
 
 @app.route('/')
 def index():
-    """Serve the main page"""
-    return render_template('index.html')
+    if 'user_id' in session:
+        return render_template('index.html')
+    return render_template('login.html')
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        data = request.json
+        username = data.get('username', '').strip()
+        password = data.get('password', '').strip()
+        
+        user = database.authenticate_user(username, password)
+        if user:
+            session['user_id'] = user['id']
+            session['username'] = user['username']
+            session['role'] = user['role']
+            return jsonify({'success': True, 'message': 'Login successful', 'role': user['role']})
+        else:
+            return jsonify({'success': False, 'error': 'Invalid username or password'}), 401
+    return render_template('login.html')
+
+@app.route('/logout', methods=['POST'])
+def logout():
+    session.clear()
+    return jsonify({'success': True, 'message': 'Logged out successfully'})
+
+@app.route('/api/check-auth', methods=['GET'])
+def check_auth():
+    if 'user_id' in session:
+        return jsonify({'authenticated': True, 'username': session['username'], 'role': session['role']})
+    return jsonify({'authenticated': False})
+
+@app.route('/api/users', methods=['GET'])
+@login_required
+@admin_required
+def get_users():
+    users = database.get_users()
+    return jsonify(users)
+
+@app.route('/api/users', methods=['POST'])
+@login_required
+@admin_required
+def add_user():
+    data = request.json
+    username = data.get('username', '').strip()
+    password = data.get('password', '').strip()
+    role = data.get('role', 'user')
+    
+    if not username or not password:
+        return jsonify({'error': 'Username and password required'}), 400
+    
+    if database.add_user(username, password, role):
+        return jsonify({'message': 'User added successfully'})
+    else:
+        return jsonify({'error': 'Username already exists'}), 400
+
+@app.route('/api/users/<int:user_id>', methods=['DELETE'])
+@login_required
+@admin_required
+def delete_user(user_id):
+    database.delete_user(user_id)
+    return jsonify({'message': 'User deleted successfully'})
 
 @app.route('/api/categories', methods=['GET'])
+@login_required
 def get_categories():
-    """Get all categories"""
     categories = database.get_categories()
     return jsonify(categories)
 
 @app.route('/api/categories', methods=['POST'])
+@login_required
 def add_category():
-    """Add a new category"""
     data = request.json
     name = data.get('name', '').strip()
     if not name:
@@ -45,8 +119,8 @@ def add_category():
         return jsonify({'error': 'Category already exists'}), 400
 
 @app.route('/api/categories/<int:category_id>', methods=['PUT'])
+@login_required
 def update_category(category_id):
-    """Update category name"""
     data = request.json
     new_name = data.get('name', '').strip()
     
@@ -65,13 +139,14 @@ def update_category(category_id):
         conn.close()
     
     if success:
+        database.sync_db_to_github()
         return jsonify({'message': 'Category updated successfully'})
     else:
         return jsonify({'error': 'Category name already exists'}), 400
 
 @app.route('/api/categories/<int:category_id>', methods=['DELETE'])
+@login_required
 def delete_category(category_id):
-    """Delete category (items will have category_id set to NULL)"""
     conn = sqlite3.connect(database.DB_PATH)
     cursor = conn.cursor()
     
@@ -86,19 +161,20 @@ def delete_category(category_id):
         conn.close()
     
     if success:
+        database.sync_db_to_github()
         return jsonify({'message': 'Category deleted successfully'})
     else:
         return jsonify({'error': 'Error deleting category'}), 400
 
 @app.route('/api/items', methods=['GET'])
+@login_required
 def get_items():
-    """Get all items"""
     items = database.get_items()
     return jsonify(items)
 
 @app.route('/api/items', methods=['POST'])
+@login_required
 def add_item():
-    """Add a new item with type"""
     data = request.json
     description = data.get('description', '').strip()
     unit = data.get('unit', '').strip()
@@ -115,8 +191,8 @@ def add_item():
     return jsonify({'message': 'Item added successfully', 'id': item_id})
 
 @app.route('/api/items/<int:item_id>', methods=['PUT'])
+@login_required
 def update_item(item_id):
-    """Update an item"""
     data = request.json
     description = data.get('description', '').strip()
     unit = data.get('unit', '').strip()
@@ -136,8 +212,8 @@ def update_item(item_id):
     return jsonify({'message': 'Item updated successfully'})
 
 @app.route('/api/items/<int:item_id>/stock', methods=['PATCH'])
+@login_required
 def update_stock(item_id):
-    """Update stock (in/out) with activity logging"""
     data = request.json
     action = data.get('action')
     quantity = int(data.get('quantity', 0))
@@ -168,8 +244,8 @@ def update_stock(item_id):
     return jsonify({'message': message, 'new_stock': new_stock})
 
 @app.route('/api/items/<int:item_id>', methods=['DELETE'])
+@login_required
 def delete_item(item_id):
-    """Delete an item with logging"""
     items = database.get_items()
     item = next((i for i in items if i['id'] == item_id), None)
     
@@ -181,41 +257,41 @@ def delete_item(item_id):
     return jsonify({'message': 'Item deleted successfully'})
 
 @app.route('/api/activities', methods=['GET'])
+@login_required
 def get_activities():
-    """Get all activities with date filter"""
     start_date = request.args.get('start_date')
     end_date = request.args.get('end_date')
     activities = database.get_activities(start_date, end_date)
     return jsonify(activities)
 
 @app.route('/api/items/type/<string:item_type>', methods=['GET'])
+@login_required
 def get_items_by_type(item_type):
-    """Get items by type"""
     items = database.get_items_by_type(item_type)
     return jsonify(items)
 
 @app.route('/api/items/category/<string:category_name>', methods=['GET'])
+@login_required
 def get_items_by_category(category_name):
-    """Get items by category name"""
     items = database.get_items_by_category(category_name)
     return jsonify(items)
 
 @app.route('/api/risk-items', methods=['GET'])
+@login_required
 def get_risk_items():
-    """Get risk items below threshold"""
     threshold = request.args.get('threshold', 10, type=int)
     items = database.get_risk_items(threshold)
     return jsonify(items)
 
 @app.route('/api/dashboard-stats', methods=['GET'])
+@login_required
 def get_dashboard_stats():
-    """Get dashboard statistics"""
     stats = database.get_dashboard_stats()
     return jsonify(stats)
 
 @app.route('/api/items/<int:item_id>/type', methods=['PATCH'])
+@login_required
 def update_item_type(item_id):
-    """Update item type"""
     data = request.json
     item_type = data.get('type')
     
@@ -233,22 +309,22 @@ def update_item_type(item_id):
     return jsonify({'message': 'Item type updated successfully'})
 
 @app.route('/api/export/items', methods=['GET'])
+@login_required
 def export_items():
-    """Export all items as JSON"""
     items = database.get_items()
     return jsonify(items)
 
 @app.route('/api/search', methods=['GET'])
+@login_required
 def search_items():
-    """Search items by description"""
     query = request.args.get('q', '').lower()
     items = database.get_items()
     filtered = [item for item in items if query in item['description'].lower()]
     return jsonify(filtered)
 
 @app.route('/api/stats/category', methods=['GET'])
+@login_required
 def get_category_stats():
-    """Get stock statistics by category"""
     items = database.get_items()
     category_stats = {}
     
