@@ -1,0 +1,831 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stock Management System | Advanced Dashboard</title>
+    
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js"></script>
+    
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Inter', sans-serif; background: #f4f6f9; overflow-x: hidden; }
+        .wrapper { display: flex; width: 100%; }
+        .sidebar {
+            width: 280px;
+            background: linear-gradient(180deg, #1e2a3a 0%, #0f1724 100%);
+            color: white;
+            position: fixed;
+            height: 100vh;
+            z-index: 1000;
+            box-shadow: 2px 0 10px rgba(0,0,0,0.1);
+            overflow-y: auto;
+        }
+        .sidebar-header { padding: 25px 20px; text-align: center; border-bottom: 1px solid rgba(255,255,255,0.1); }
+        .sidebar-header h3 { font-size: 22px; font-weight: 700; }
+        .sidebar-header p { font-size: 12px; opacity: 0.7; margin-top: 5px; }
+        .sidebar-menu { padding: 20px 0; }
+        .menu-item {
+            padding: 12px 25px;
+            margin: 5px 15px;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            color: #cbd5e0;
+        }
+        .menu-item i { width: 24px; font-size: 18px; }
+        .menu-item:hover { background: rgba(255,255,255,0.1); color: white; transform: translateX(5px); }
+        .menu-item.active { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; box-shadow: 0 5px 15px rgba(102,126,234,0.3); }
+        .sub-menu { margin-left: 45px; margin-top: 5px; margin-bottom: 5px; }
+        .sub-menu-item {
+            padding: 8px 15px;
+            margin: 3px 0;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s;
+            color: #cbd5e0;
+            font-size: 13px;
+        }
+        .sub-menu-item:hover { background: rgba(255,255,255,0.1); color: white; }
+        .sub-menu-item.active-category { background: rgba(102,126,234,0.3); color: white; }
+        .main-content { margin-left: 280px; width: calc(100% - 280px); min-height: 100vh; }
+        .top-navbar {
+            background: white;
+            padding: 15px 30px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.08);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: sticky;
+            top: 0;
+            z-index: 999;
+            flex-wrap: wrap;
+            gap: 15px;
+        }
+        .navbar-title { font-size: 24px; font-weight: 700; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .navbar-right { display: flex; align-items: center; gap: 15px; flex-wrap: wrap; }
+        .btn-excel { background: #28a745; color: white; padding: 8px 16px; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; display: inline-flex; align-items: center; gap: 8px; }
+        .btn-excel-import { background: #17a2b8; }
+        .stat-card { background: #f8f9fa; padding: 8px 20px; border-radius: 10px; display: flex; align-items: center; gap: 10px; }
+        .stats-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 20px; margin-bottom: 30px; }
+        .stat-box { background: white; padding: 20px; border-radius: 15px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); display: flex; justify-content: space-between; align-items: center; transition: transform 0.3s; }
+        .stat-box:hover { transform: translateY(-5px); }
+        .stat-box-info h3 { font-size: 32px; font-weight: 800; color: #1e2a3a; }
+        .stat-box-info p { color: #6c757d; font-size: 14px; margin-top: 5px; }
+        .stat-box-icon { width: 50px; height: 50px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 12px; display: flex; align-items: center; justify-content: center; }
+        .stat-box-icon i { font-size: 24px; color: white; }
+        .charts-row { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 30px; }
+        .chart-card { background: white; padding: 20px; border-radius: 15px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
+        .chart-card h4 { margin-bottom: 20px; color: #1e2a3a; }
+        canvas { max-height: 300px; }
+        .content-wrapper { padding: 30px; height: calc(100vh - 80px); overflow-y: auto; }
+        .filter-bar { background: white; padding: 20px; border-radius: 15px; margin-bottom: 20px; display: flex; gap: 15px; flex-wrap: wrap; align-items: center; position: sticky; top: 0; z-index: 100; }
+        .filter-group { display: flex; align-items: center; gap: 10px; }
+        .filter-group label { font-weight: 600; color: #495057; }
+        .filter-group select, .filter-group input { padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; }
+        .table-card { background: white; border-radius: 15px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); overflow: hidden; }
+        .table-header { padding: 20px 25px; background: white; border-bottom: 2px solid #f0f0f0; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px; }
+        .table-header h3 { font-size: 20px; color: #1e2a3a; }
+        .search-box { display: flex; gap: 10px; flex-wrap: wrap; }
+        .search-box input { padding: 10px 15px; border: 1px solid #ddd; border-radius: 8px; font-size: 14px; width: 250px; }
+        .btn { padding: 10px 20px; border: none; border-radius: 8px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; font-size: 14px; }
+        .btn-primary { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }
+        .btn-success { background: #28a745; color: white; }
+        .btn-warning { background: #ffc107; color: #333; }
+        .btn-danger { background: #dc3545; color: white; }
+        .btn-sm { padding: 5px 10px; font-size: 12px; }
+        .table-responsive { overflow-x: auto; max-height: calc(100vh - 300px); overflow-y: auto; }
+        table { width: 100%; border-collapse: collapse; }
+        thead { background: #f8f9fa; position: sticky; top: 0; z-index: 10; }
+        th { padding: 15px 12px; text-align: left; font-weight: 600; color: #495057; font-size: 12px; text-transform: uppercase; cursor: pointer; background: #f8f9fa; }
+        td { padding: 12px; border-top: 1px solid #e9ecef; color: #6c757d; font-size: 13px; }
+        tr:hover { background: #f8f9fa; }
+        .badge { padding: 5px 12px; border-radius: 20px; font-size: 11px; font-weight: 600; display: inline-block; }
+        .badge-success { background: #d4edda; color: #155724; }
+        .badge-warning { background: #fff3cd; color: #856404; }
+        .badge-danger { background: #f8d7da; color: #721c24; }
+        .action-buttons { display: flex; gap: 5px; flex-wrap: wrap; }
+        .icon-btn { width: 32px; height: 32px; border-radius: 6px; border: none; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; transition: all 0.2s; }
+        .icon-btn.view { background: #17a2b8; color: white; }
+        .icon-btn.edit { background: #ffc107; color: #333; }
+        .icon-btn.in { background: #28a745; color: white; }
+        .icon-btn.out { background: #dc3545; color: white; }
+        .icon-btn.delete { background: #6c757d; color: white; }
+        .icon-btn:hover { transform: scale(1.05); opacity: 0.9; }
+        .pagination { display: flex; justify-content: center; gap: 10px; padding: 20px; background: white; border-top: 1px solid #e9ecef; }
+        .pagination button { padding: 8px 15px; border: 1px solid #ddd; background: white; cursor: pointer; border-radius: 5px; }
+        .pagination button:hover { background: #667eea; color: white; }
+        .pagination button.active { background: #667eea; color: white; }
+        .modal { display: none; position: fixed; z-index: 9999; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); backdrop-filter: blur(2px); }
+        .modal-dialog { position: relative; width: 90%; max-width: 600px; margin: 50px auto; }
+        .modal-content { background: white; border-radius: 15px; overflow: hidden; }
+        .modal-header { padding: 20px 25px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; display: flex; justify-content: space-between; align-items: center; }
+        .modal-header h3 { font-size: 20px; }
+        .close { font-size: 28px; cursor: pointer; background: none; border: none; color: white; }
+        .modal-body { padding: 25px; }
+        .form-group { margin-bottom: 20px; }
+        .form-group label { display: block; margin-bottom: 8px; font-weight: 600; color: #495057; }
+        .form-group input, .form-group select { width: 100%; padding: 10px 15px; border: 2px solid #e9ecef; border-radius: 8px; font-size: 14px; }
+        .modal-footer { padding: 20px 25px; background: #f8f9fa; display: flex; justify-content: flex-end; gap: 10px; }
+        .activity-log { max-height: 500px; overflow-y: auto; }
+        .activity-item { padding: 15px; border-bottom: 1px solid #e9ecef; display: flex; justify-content: space-between; align-items: center; }
+        .activity-item.in { border-left: 4px solid #28a745; }
+        .activity-item.out { border-left: 4px solid #dc3545; }
+        .activity-item.delete { border-left: 4px solid #6c757d; }
+        .toast-notification { position: fixed; top: 20px; right: 20px; z-index: 10000; }
+        .toast { background: white; border-radius: 10px; box-shadow: 0 5px 20px rgba(0,0,0,0.15); margin-bottom: 10px; overflow: hidden; min-width: 300px; animation: slideIn 0.3s ease; }
+        .toast-header { padding: 12px 15px; background: #f8f9fa; display: flex; align-items: center; gap: 10px; }
+        .toast-body { padding: 12px 15px; }
+        .toast.success .toast-header { border-left: 4px solid #28a745; }
+        .toast.error .toast-header { border-left: 4px solid #dc3545; }
+        @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        @media (max-width: 768px) { .sidebar { transform: translateX(-100%); } .main-content { margin-left: 0; width: 100%; } .charts-row { grid-template-columns: 1fr; } }
+    </style>
+</head>
+<body>
+    <div class="wrapper">
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <h3><i class="fas fa-boxes"></i> StockMaster Pro</h3>
+                <p>Advanced Inventory System</p>
+            </div>
+            <div class="sidebar-menu">
+                <div class="menu-item" onclick="showSection('dashboard')"><i class="fas fa-tachometer-alt"></i><span>Dashboard</span></div>
+                <div class="menu-parent">
+                    <div class="menu-item" onclick="toggleSubMenu('accessoriesMenu')">
+                        <i class="fas fa-microchip"></i><span>Accessories</span><i class="fas fa-chevron-down" style="margin-left: auto;"></i>
+                    </div>
+                    <div id="accessoriesMenu" class="sub-menu" style="display: block;">
+                        <div class="sub-menu-item" onclick="filterByCategory('all', 'accessory')">📦 All Accessories</div>
+                        <div id="categoryList"></div>
+                    </div>
+                </div>
+                <div class="menu-item" onclick="showToolsSection()"><i class="fas fa-tools"></i><span>Tools</span></div>
+                <div class="menu-item" onclick="showSection('reports')"><i class="fas fa-chart-line"></i><span>Reports</span></div>
+                <div class="menu-item" onclick="showSection('risk')"><i class="fas fa-exclamation-triangle"></i><span> Risk </span></div>
+            </div>
+        </div>
+
+        <div class="main-content">
+            <div class="top-navbar">
+                <div class="navbar-title"><i class="fas fa-chalkboard-user"></i> Admin Dashboard</div>
+                <div class="navbar-right">
+                    <button class="btn-excel" id="exportFilteredBtn" onclick="exportFilteredToExcel()"><i class="fas fa-file-excel"></i> Export Current View</button>
+                    <input type="file" id="excelFileInput" accept=".xlsx, .xls" style="display: none;" onchange="importExcel(this)">
+                    <button class="btn-excel btn-excel-import" onclick="document.getElementById('excelFileInput').click()"><i class="fas fa-upload"></i> Import Excel</button>
+                    <div class="stat-card"><i class="fas fa-calendar-alt"></i><div class="stat-info"><h4>Today's Date</h4><p id="currentDate"></p></div></div>
+                </div>
+            </div>
+
+            <div class="content-wrapper">
+                <div id="dashboardSection">
+                    <div class="stats-row" id="statsRow"></div>
+                    <div class="charts-row">
+                        <div class="chart-card"><h4><i class="fas fa-chart-pie"></i> Stock by Category</h4><canvas id="categoryChart"></canvas></div>
+                        <div class="chart-card"><h4><i class="fas fa-chart-bar"></i> Top 5 Items by Stock</h4><canvas id="topItemsChart"></canvas></div>
+                    </div>
+                    <div class="table-card"><div class="table-header"><h3><i class="fas fa-clock"></i> Recent Activities</h3></div><div class="activity-log" id="recentActivities"></div></div>
+                </div>
+
+                <div id="inventorySection">
+                    <div class="filter-bar">
+                        <div class="filter-group"><label>Sort by:</label><select id="sortSelect" onchange="sortItems()"><option value="id">Default</option><option value="description">Description A-Z</option><option value="stock_high">Stock High to Low</option><option value="stock_low">Stock Low to High</option><option value="category">Category</option></select></div>
+                        <div class="filter-group"><label>Filter by Status:</label><select id="statusFilter" onchange="filterItems()"><option value="all">All</option><option value="good">Good Stock (>50)</option><option value="medium">Medium Stock (10-50)</option><option value="low">Low Stock (<10)</option><option value="out">Out of Stock</option></select></div>
+                        <div class="search-box"><input type="text" id="searchInput" placeholder="Search by description..." onkeyup="filterItems()"></div>
+                    </div>
+                    <div class="table-card">
+                        <div class="table-header"><h3><i class="fas fa-box"></i> Accessories Inventory</h3><div class="search-box"><button class="btn btn-primary" onclick="openAddItemModal('accessory')"><i class="fas fa-plus"></i> Add Item</button><button class="btn btn-success" onclick="openAddCategoryModal()"><i class="fas fa-tag"></i> Add Category</button></div></div>
+                        <div class="table-responsive" id="tableContainer">
+                            <table id="mainTable"><thead><tr><th>N°</th><th>Description</th><th>Unit</th><th>Stock In</th><th>Stock Out</th><th>Total Stock</th><th>Category</th><th>Status</th><th>Actions</th></tr></thead><tbody id="inventoryTableBody"></tbody></table>
+                        </div>
+                        <div id="pagination" class="pagination"></div>
+                    </div>
+                </div>
+
+                <div id="toolsSection" style="display: none;">
+                    <div class="filter-bar"><div class="search-box"><input type="text" id="toolsSearchInput" placeholder="Search tools..." onkeyup="filterTools()"></div></div>
+                    <div class="table-card"><div class="table-header"><h3><i class="fas fa-tools"></i> Tools & Equipment</h3><button class="btn btn-primary" onclick="openAddItemModal('tool')"><i class="fas fa-plus"></i> Add Tool</button></div><div class="table-responsive"><table><thead><tr><th>N°</th><th>Description</th><th>Unit</th><th>Stock In</th><th>Stock Out</th><th>Total Stock</th><th>Status</th><th>Actions</th></tr></thead><tbody id="toolsTableBody"></tbody></table></div></div>
+                </div>
+
+                <div id="reportsSection" style="display: none;">
+                    <div class="filter-bar"><div class="date-range" style="display: flex; gap: 15px; align-items: center; flex-wrap: wrap;"><input type="date" id="reportStartDate"><span>to</span><input type="date" id="reportEndDate"><button class="btn btn-primary" onclick="filterActivities()">Filter</button><button class="btn btn-success" onclick="exportActivitiesToExcel()">Export Report</button></div></div>
+                    <div class="table-card"><div class="table-header"><h3><i class="fas fa-history"></i> Stock Activity Log</h3></div><div class="activity-log" id="activityLog"></div></div>
+                </div>
+
+                <div id="riskSection" style="display: none;">
+                    <div class="filter-bar"><div class="filter-group"><label>Risk Threshold:</label><input type="number" id="riskThreshold" value="10" min="1" onchange="updateRiskItems()"></div></div>
+                    <div class="table-card"><div class="table-header"><h3><i class="fas fa-exclamation-triangle"></i> Low Stock Risk Items </h3></div><div class="table-responsive"><table><thead><tr><th>N°</th><th>Description</th><th>Current Stock</th><th>Threshold</th><th>Risk Level</th><th>Category</th><th>Actions</th></tr></thead><tbody id="riskTableBody"></tbody></table></div></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modals -->
+    <div id="itemModal" class="modal"><div class="modal-dialog"><div class="modal-content"><div class="modal-header"><h3 id="itemModalTitle">Add New Item</h3><button class="close" onclick="closeModal('itemModal')">&times;</button></div><form id="itemForm"><div class="modal-body"><input type="hidden" id="itemId"><input type="hidden" id="itemTypeValue"><div class="form-group"><label>Description *</label><input type="text" id="itemDescription" required></div><div class="form-group"><label>Unit *</label><input type="text" id="itemUnit" required placeholder="pcs, kg, liter"></div><div class="form-group" id="stockInGroup"><label>Initial Stock</label><input type="number" id="itemStockIn" value="0" min="0"></div><div class="form-group"><label>Category *</label><select id="itemCategory" required></select></div></div><div class="modal-footer"><button type="button" class="btn btn-danger" onclick="closeModal('itemModal')">Cancel</button><button type="submit" class="btn btn-primary">Save Item</button></div></form></div></div></div>
+
+    <div id="categoryModal" class="modal"><div class="modal-dialog"><div class="modal-content"><div class="modal-header"><h3>Manage Categories</h3><button class="close" onclick="closeModal('categoryModal')">&times;</button></div><div class="modal-body"><div class="form-group"><label>New Category Name</label><input type="text" id="newCategoryName" placeholder="Enter category name"></div><button class="btn btn-primary" onclick="addNewCategory()" style="width: 100%;">Add Category</button><hr style="margin: 20px 0;"><h4>Existing Categories</h4><div id="categoriesList" style="margin-top: 15px;"></div></div><div class="modal-footer"><button type="button" class="btn btn-danger" onclick="closeModal('categoryModal')">Close</button></div></div></div></div>
+
+    <div id="stockModal" class="modal"><div class="modal-dialog"><div class="modal-content"><div class="modal-header"><h3 id="stockModalTitle">Update Stock</h3><button class="close" onclick="closeModal('stockModal')">&times;</button></div><form id="stockForm"><div class="modal-body"><input type="hidden" id="stockItemId"><input type="hidden" id="stockAction"><div class="form-group"><label>Quantity</label><input type="number" id="stockQuantity" required min="1"></div><div class="form-group"><label>Notes</label><input type="text" id="stockNotes" placeholder="Optional notes"></div></div><div class="modal-footer"><button type="button" class="btn btn-danger" onclick="closeModal('stockModal')">Cancel</button><button type="submit" class="btn btn-primary">Confirm</button></div></form></div></div></div>
+
+    <div id="deleteConfirmModal" class="modal"><div class="modal-dialog"><div class="modal-content"><div class="modal-header"><h3><i class="fas fa-trash-alt"></i> Confirm Delete</h3><button class="close" onclick="closeModal('deleteConfirmModal')">&times;</button></div><div class="modal-body"><p>Are you sure you want to delete this item? This action cannot be undone.</p><p id="deleteItemInfo" style="font-weight: bold; margin-top: 10px;"></p></div><div class="modal-footer"><button class="btn btn-secondary" onclick="closeModal('deleteConfirmModal')">Cancel</button><button class="btn btn-danger" id="confirmDeleteBtn">Delete Permanently</button></div></div></div></div>
+
+    <div id="toastContainer" class="toast-notification"></div>
+
+    <script>
+        let categories = [], allItems = [], activities = [], currentFilter = 'all', currentSort = 'id', currentCategoryFilter = 'all', currentItemType = 'accessory', currentPage = 1, itemsPerPage = 50, filteredItems = [], categoryChart, topItemsChart;
+        let pendingDeleteId = null;
+
+        document.getElementById('currentDate').innerHTML = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+        const today = new Date().toISOString().split('T')[0];
+        const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+        document.getElementById('reportStartDate').value = weekAgo;
+        document.getElementById('reportEndDate').value = today;
+
+        async function deleteItem(id) {
+            const item = allItems.find(i => i.id === id);
+            if (!item) return;
+            document.getElementById('deleteItemInfo').innerHTML = `<strong>${escapeHtml(item.description)}</strong> (${item.type})`;
+            pendingDeleteId = id;
+            document.getElementById('deleteConfirmModal').style.display = 'flex';
+        }
+
+        async function confirmDelete() {
+            if (!pendingDeleteId) return;
+            try {
+                const response = await fetch(`/api/items/${pendingDeleteId}`, { method: 'DELETE' });
+                if (response.ok) {
+                    showToast('Item deleted successfully!', 'success');
+                    await loadAllData();
+                } else {
+                    const error = await response.json();
+                    showToast(error.error || 'Failed to delete item', 'error');
+                }
+            } catch (err) {
+                showToast('Network error while deleting', 'error');
+            } finally {
+                closeModal('deleteConfirmModal');
+                pendingDeleteId = null;
+            }
+        }
+
+        document.getElementById('confirmDeleteBtn').onclick = confirmDelete;
+
+        function exportFilteredToExcel() {
+            let dataToExport = filteredItems.map(item => ({
+                'Description': item.description,
+                'Unit': item.unit,
+                'Stock In': item.stock_in,
+                'Stock Out': item.stock_out || 0,
+                'Total Stock': item.total_stock,
+                'Category': item.category || 'Uncategorized'
+            }));
+            if (dataToExport.length === 0) { showToast('No items match the current filter. Nothing to export.', 'error'); return; }
+            const ws = XLSX.utils.json_to_sheet(dataToExport);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, 'Filtered_Accessories');
+            XLSX.writeFile(wb, `accessories_${new Date().toISOString().split('T')[0]}.xlsx`);
+            showToast(`Exported ${dataToExport.length} items from current view!`, 'success');
+        }
+
+        async function loadCategories() {
+            try {
+                const response = await fetch('/api/categories');
+                if (!response.ok) throw new Error('Failed to load categories');
+                categories = await response.json();
+                const categorySelect = document.getElementById('itemCategory');
+                categorySelect.innerHTML = '<option value="">Select Category</option>';
+                const categoryList = document.getElementById('categoryList');
+                categoryList.innerHTML = '';
+                categories.forEach(cat => {
+                    categorySelect.innerHTML += `<option value="${cat.id}">${escapeHtml(cat.name)}</option>`;
+                    categoryList.innerHTML += `<div class="sub-menu-item" onclick="filterByCategory('${cat.name}', 'accessory')">📁 ${escapeHtml(cat.name)}</div>`;
+                });
+                updateCategoriesList();
+            } catch (error) {
+                console.error('Error loading categories:', error);
+                showToast('Error loading categories', 'error');
+            }
+        }
+
+        function updateCategoriesList() {
+            const container = document.getElementById('categoriesList');
+            if (!container) return;
+            container.innerHTML = '';
+            categories.forEach(cat => {
+                container.innerHTML += `<div style="display: flex; justify-content: space-between; align-items: center; padding: 10px; border-bottom: 1px solid #eee;"><span>${escapeHtml(cat.name)}</span><div><button class="btn btn-warning btn-sm" onclick="editCategory(${cat.id}, '${cat.name}')">Edit</button><button class="btn btn-danger btn-sm" onclick="deleteCategory(${cat.id})">Delete</button></div></div>`;
+            });
+        }
+
+        async function addNewCategory() {
+            const name = document.getElementById('newCategoryName').value.trim();
+            if (!name) { showToast('Please enter category name', 'error'); return; }
+            try {
+                const response = await fetch('/api/categories', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
+                if (response.ok) { 
+                    showToast('Category added successfully!', 'success'); 
+                    document.getElementById('newCategoryName').value = ''; 
+                    await loadAllData();
+                } else { 
+                    showToast('Error adding category', 'error'); 
+                }
+            } catch (error) {
+                showToast('Network error', 'error');
+            }
+        }
+
+        async function editCategory(id, oldName) {
+            const newName = prompt('Edit category name:', oldName);
+            if (newName && newName !== oldName) {
+                try {
+                    const response = await fetch(`/api/categories/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: newName }) });
+                    if (response.ok) { 
+                        showToast('Category updated successfully!', 'success'); 
+                        await loadAllData();
+                    } else { 
+                        showToast('Error updating category', 'error'); 
+                    }
+                } catch (error) {
+                    showToast('Network error', 'error');
+                }
+            }
+        }
+
+        async function deleteCategory(id) {
+            if (confirm('Are you sure you want to delete this category? Items will become Uncategorized.')) {
+                try {
+                    const response = await fetch(`/api/categories/${id}`, { method: 'DELETE' });
+                    if (response.ok) { 
+                        showToast('Category deleted successfully!', 'success'); 
+                        await loadAllData();
+                    } else { 
+                        showToast('Error deleting category', 'error'); 
+                    }
+                } catch (error) {
+                    showToast('Network error', 'error');
+                }
+            }
+        }
+
+        async function loadItems() {
+            try {
+                const response = await fetch('/api/items');
+                if (!response.ok) throw new Error('Failed to load items');
+                allItems = await response.json();
+                allItems = allItems.map(item => ({ ...item, stock_out: item.stock_out || 0, total_stock: (item.stock_in || 0) - (item.stock_out || 0) }));
+            } catch (error) {
+                console.error('Error loading items:', error);
+                showToast('Error loading items', 'error');
+                allItems = [];
+            }
+        }
+
+        async function loadActivities() { 
+            try {
+                const response = await fetch('/api/activities'); 
+                activities = await response.json(); 
+            } catch (error) {
+                console.error('Error loading activities:', error);
+                activities = [];
+            }
+        }
+
+        async function loadAllData() {
+            await Promise.all([loadCategories(), loadItems(), loadActivities()]);
+            filterAndDisplayItems();
+            updateStats();
+            updateRiskItems();
+            updateToolsTable();
+            updateCharts();
+            updateRecentActivities();
+        }
+
+        function filterAndDisplayItems() {
+            let filtered = allItems.filter(item => item.type === 'accessory');
+            if (currentCategoryFilter !== 'all') filtered = filtered.filter(item => item.category === currentCategoryFilter);
+            if (currentFilter !== 'all') {
+                filtered = filtered.filter(item => {
+                    const totalStock = item.total_stock;
+                    if (currentFilter === 'good') return totalStock > 50;
+                    if (currentFilter === 'medium') return totalStock >= 10 && totalStock <= 50;
+                    if (currentFilter === 'low') return totalStock > 0 && totalStock < 10;
+                    if (currentFilter === 'out') return totalStock === 0;
+                    return true;
+                });
+            }
+            const searchTerm = document.getElementById('searchInput')?.value.toLowerCase() || '';
+            if (searchTerm) filtered = filtered.filter(item => item.description.toLowerCase().includes(searchTerm));
+            filtered.sort((a, b) => {
+                switch(currentSort) {
+                    case 'description': return a.description.localeCompare(b.description);
+                    case 'stock_high': return b.total_stock - a.total_stock;
+                    case 'stock_low': return a.total_stock - b.total_stock;
+                    case 'category': return (a.category || '').localeCompare(b.category || '');
+                    default: return a.id - b.id;
+                }
+            });
+            filteredItems = filtered;
+            currentPage = 1;
+            updateInventoryTable();
+        }
+
+        function updateInventoryTable() {
+            const start = (currentPage - 1) * itemsPerPage;
+            const end = start + itemsPerPage;
+            const pageItems = filteredItems.slice(start, end);
+            const tbody = document.getElementById('inventoryTableBody');
+            if (!pageItems.length) { tbody.innerHTML = '<td><td colspan="9" style="text-align: center;">No accessories found</td></tr>'; updatePagination(); return; }
+            tbody.innerHTML = '';
+            pageItems.forEach((item, index) => {
+                const status = item.total_stock === 0 ? 'Out of Stock' : (item.total_stock < 10 ? 'Low Stock' : (item.total_stock < 50 ? 'Medium Stock' : 'Good Stock'));
+                const statusClass = item.total_stock === 0 ? 'badge-danger' : (item.total_stock < 10 ? 'badge-danger' : (item.total_stock < 50 ? 'badge-warning' : 'badge-success'));
+                tbody.innerHTML += `<tr>
+                    <td>${start + index + 1}</td>
+                    <td><strong>${escapeHtml(item.description)}</strong></td>
+                    <td>${escapeHtml(item.unit)}</td>
+                    <td>${item.stock_in}</td>
+                    <td>${item.stock_out || 0}</td>
+                    <td><span class="badge ${statusClass}">${item.total_stock}</span></td>
+                    <td>${escapeHtml(item.category || 'Uncategorized')}</td>
+                    <td><span class="badge ${statusClass}">${status}</span></td>
+                    <td class="action-buttons">
+                        <button class="icon-btn view" onclick="viewItem(${item.id})" title="View"><i class="fas fa-eye"></i></button>
+                        <button class="icon-btn edit" onclick="editItem(${item.id})" title="Edit"><i class="fas fa-edit"></i></button>
+                        <button class="icon-btn in" onclick="openStockModal(${item.id}, 'in')" title="Stock In"><i class="fas fa-arrow-down"></i></button>
+                        <button class="icon-btn out" onclick="openStockModal(${item.id}, 'out')" title="Stock Out"><i class="fas fa-arrow-up"></i></button>
+                        <button class="icon-btn delete" onclick="deleteItem(${item.id})" title="Delete"><i class="fas fa-trash-alt"></i></button>
+                    </td>
+                </tr>`;
+            });
+            updatePagination();
+        }
+
+        function updateToolsTable() {
+            const tools = allItems.filter(item => item.type === 'tool');
+            const searchTerm = document.getElementById('toolsSearchInput')?.value.toLowerCase() || '';
+            let filtered = tools;
+            if (searchTerm) filtered = filtered.filter(item => item.description.toLowerCase().includes(searchTerm));
+            const tbody = document.getElementById('toolsTableBody');
+            if (!filtered.length) { tbody.innerHTML = '<tr><td colspan="8" style="text-align: center;">No tools found</td></tr>'; return; }
+            tbody.innerHTML = '';
+            filtered.forEach((item, index) => {
+                const status = item.total_stock === 0 ? 'Out of Stock' : (item.total_stock < 10 ? 'Low Stock' : (item.total_stock < 50 ? 'Medium Stock' : 'Good Stock'));
+                const statusClass = item.total_stock === 0 ? 'badge-danger' : (item.total_stock < 10 ? 'badge-danger' : (item.total_stock < 50 ? 'badge-warning' : 'badge-success'));
+                tbody.innerHTML += `<tr>
+                    <td>${index + 1}</td>
+                    <td><strong>${escapeHtml(item.description)}</strong></td>
+                    <td>${escapeHtml(item.unit)}</td>
+                    <td>${item.stock_in}</td>
+                    <td>${item.stock_out || 0}</td>
+                    <td><span class="badge ${statusClass}">${item.total_stock}</span></td>
+                    <td><span class="badge ${statusClass}">${status}</span></td>
+                    <td class="action-buttons">
+                        <button class="icon-btn view" onclick="viewItem(${item.id})"><i class="fas fa-eye"></i></button>
+                        <button class="icon-btn edit" onclick="editItem(${item.id})"><i class="fas fa-edit"></i></button>
+                        <button class="icon-btn in" onclick="openStockModal(${item.id}, 'in')"><i class="fas fa-arrow-down"></i></button>
+                        <button class="icon-btn out" onclick="openStockModal(${item.id}, 'out')"><i class="fas fa-arrow-up"></i></button>
+                        <button class="icon-btn delete" onclick="deleteItem(${item.id})"><i class="fas fa-trash-alt"></i></button>
+                    </td>
+                </tr>`;
+            });
+        }
+
+        function updatePagination() {
+            const totalPages = Math.ceil(filteredItems.length / itemsPerPage);
+            const paginationDiv = document.getElementById('pagination');
+            if (!paginationDiv) return;
+            if (totalPages <= 1) { paginationDiv.innerHTML = ''; return; }
+            let html = `<button onclick="changePage(1)" ${currentPage === 1 ? 'disabled' : ''}>« First</button>`;
+            html += `<button onclick="changePage(${currentPage - 1})" ${currentPage === 1 ? 'disabled' : ''}>Previous</button>`;
+            for (let i = 1; i <= Math.min(totalPages, 5); i++) html += `<button onclick="changePage(${i})" class="${currentPage === i ? 'active' : ''}">${i}</button>`;
+            html += `<button onclick="changePage(${currentPage + 1})" ${currentPage === totalPages ? 'disabled' : ''}>Next</button>`;
+            html += `<button onclick="changePage(${totalPages})" ${currentPage === totalPages ? 'disabled' : ''}>Last »</button>`;
+            paginationDiv.innerHTML = html;
+        }
+
+        function changePage(page) { currentPage = page; updateInventoryTable(); document.getElementById('tableContainer')?.scrollIntoView({ behavior: 'smooth' }); }
+        function filterTools() { updateToolsTable(); }
+        
+        function updateRiskItems() { 
+            const threshold = parseInt(document.getElementById('riskThreshold')?.value) || 10;
+            const riskItems = allItems.filter(item => item.total_stock <= threshold);
+            const tbody = document.getElementById('riskTableBody');
+            if (!riskItems.length) { tbody.innerHTML = '<tr><td colspan="6" style="text-align: center;">No items at risk</td></tr>'; return; }
+            tbody.innerHTML = '';
+            riskItems.forEach((item, index) => {
+                const riskLevel = item.total_stock === 0 ? 'Critical Risk' : (item.total_stock <= threshold/2 ? 'High Risk' : 'Moderate Risk');
+                tbody.innerHTML += `<tr><td>${index+1}</td><td><strong>${escapeHtml(item.description)}</strong></td><td><span class="badge badge-danger">${item.total_stock}</span></td><td>${threshold}</td><td><span class="badge badge-danger">${riskLevel}</span></td><td>${escapeHtml(item.category || 'Uncategorized')}</td><td><button class="btn btn-warning btn-sm" onclick="openStockModal(${item.id}, 'in')"><i class="fas fa-plus"></i> Restock</button></td></tr>`;
+            });
+        }
+        
+        function updateStats() { 
+            const accessories = allItems.filter(i => i.type === 'accessory');
+            const totalItems = accessories.length;
+            const totalStock = accessories.reduce((sum, i) => sum + (i.total_stock || 0), 0);
+            const lowStock = accessories.filter(i => i.total_stock < 10 && i.total_stock > 0).length;
+            const outStock = accessories.filter(i => i.total_stock === 0).length;
+            document.getElementById('statsRow').innerHTML = `<div class="stat-box"><div class="stat-box-info"><h3>${totalItems}</h3><p>Total Accessories</p></div><div class="stat-box-icon"><i class="fas fa-microchip"></i></div></div><div class="stat-box"><div class="stat-box-info"><h3>${totalStock}</h3><p>Total Stock Units</p></div><div class="stat-box-icon"><i class="fas fa-boxes"></i></div></div><div class="stat-box"><div class="stat-box-info"><h3>${lowStock}</h3><p>Low Stock Items</p></div><div class="stat-box-icon"><i class="fas fa-exclamation-triangle"></i></div></div><div class="stat-box"><div class="stat-box-info"><h3>${outStock}</h3><p>Out of Stock</p></div><div class="stat-box-icon"><i class="fas fa-times-circle"></i></div></div>`;
+        }
+        
+        function updateCharts() { 
+            const accessories = allItems.filter(i => i.type === 'accessory');
+            const categoryMap = new Map();
+            accessories.forEach(item => { const cat = item.category || 'Uncategorized'; categoryMap.set(cat, (categoryMap.get(cat) || 0) + (item.total_stock || 0)); });
+            const ctx1 = document.getElementById('categoryChart')?.getContext('2d');
+            if (ctx1) { if (categoryChart) categoryChart.destroy(); categoryChart = new Chart(ctx1, { type: 'pie', data: { labels: Array.from(categoryMap.keys()), datasets: [{ data: Array.from(categoryMap.values()), backgroundColor: ['#667eea', '#764ba2', '#28a745', '#ffc107', '#dc3545', '#17a2b8', '#fd7e14'] }] }, options: { responsive: true } }); }
+            const topItems = [...accessories].sort((a,b) => (b.total_stock || 0) - (a.total_stock || 0)).slice(0, 5);
+            const ctx2 = document.getElementById('topItemsChart')?.getContext('2d');
+            if (ctx2) { if (topItemsChart) topItemsChart.destroy(); topItemsChart = new Chart(ctx2, { type: 'bar', data: { labels: topItems.map(i => i.description.length > 15 ? i.description.substring(0,15)+'...' : i.description), datasets: [{ label: 'Stock Quantity', data: topItems.map(i => i.total_stock), backgroundColor: '#667eea' }] }, options: { responsive: true } }); }
+        }
+        
+        function updateRecentActivities() {
+            const container = document.getElementById('recentActivities');
+            if (!container) return;
+            const recent = activities.slice(0, 10);
+            if (recent.length === 0) { container.innerHTML = '<div style="padding: 20px; text-align: center;">No activities yet</div>'; return; }
+            container.innerHTML = '';
+            recent.forEach(act => { container.innerHTML += `<div class="activity-item ${act.action}"><div><strong>${escapeHtml(act.item_name)}</strong><br><small>${act.date} ${act.time}</small>${act.notes ? `<br><small>📝 ${escapeHtml(act.notes)}</small>` : ''}</div><div><span class="badge ${act.action === 'in' ? 'badge-success' : (act.action === 'out' ? 'badge-danger' : 'badge-warning')}">${act.action === 'in' ? '+' : (act.action === 'out' ? '-' : '×')}${act.quantity}</span></div></div>`; });
+        }
+        
+        async function filterActivities() {
+            const startDate = document.getElementById('reportStartDate').value;
+            const endDate = document.getElementById('reportEndDate').value;
+            try {
+                const response = await fetch(`/api/activities?start_date=${startDate}&end_date=${endDate}`);
+                const filtered = await response.json();
+                const activityLog = document.getElementById('activityLog');
+                if (!filtered.length) { activityLog.innerHTML = '<div style="padding: 20px; text-align: center;">No activities found</div>'; return; }
+                activityLog.innerHTML = '';
+                filtered.reverse().forEach(act => { activityLog.innerHTML += `<div class="activity-item ${act.action}"><div><strong>${escapeHtml(act.item_name)}</strong><br><small>${act.date} ${act.time}</small>${act.notes ? `<br><small>📝 ${escapeHtml(act.notes)}</small>` : ''}</div><div><span class="badge ${act.action === 'in' ? 'badge-success' : (act.action === 'out' ? 'badge-danger' : 'badge-warning')}">${act.action === 'in' ? '+' : (act.action === 'out' ? '-' : '×')}${act.quantity}</span></div></div>`; });
+            } catch (error) {
+                showToast('Error filtering activities', 'error');
+            }
+        }
+        
+        function exportActivitiesToExcel() {
+            const exportData = activities.map(act => ({ 'Date': act.date, 'Time': act.time, 'Item': act.item_name, 'Type': act.action === 'in' ? 'Stock In' : (act.action === 'out' ? 'Stock Out' : 'Delete'), 'Quantity': act.quantity, 'Notes': act.notes || '' }));
+            const ws = XLSX.utils.json_to_sheet(exportData);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, 'Activities');
+            XLSX.writeFile(wb, `activities_${new Date().toISOString().split('T')[0]}.xlsx`);
+            showToast('Report exported!', 'success');
+        }
+        
+        async function importExcel(input) {
+            const file = input.files[0];
+            if (!file) return;
+            
+            showToast('Reading Excel file...', 'info');
+            
+            const reader = new FileReader();
+            reader.onload = async function(e) {
+                try {
+                    const data = new Uint8Array(e.target.result);
+                    const workbook = XLSX.read(data, {type: 'array'});
+                    const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+                    const rows = XLSX.utils.sheet_to_json(firstSheet);
+                    
+                    console.log('Total rows found:', rows.length);
+                    
+                    if (!rows || rows.length === 0) {
+                        showToast('No data found in Excel file', 'error');
+                        return;
+                    }
+                    
+                    let successCount = 0;
+                    let errorCount = 0;
+                    let skippedCount = 0;
+                    
+                    showToast(`Found ${rows.length} items to import. Starting import...`, 'info');
+                    
+                    for (let i = 0; i < rows.length; i++) {
+                        const row = rows[i];
+                        
+                        let description = row.Description || row.description || row.DESCRIPTION || '';
+                        let unit = row.Unit || row.unit || row.UNIT || 'pcs';
+                        let stock = parseInt(row.Stock || row.stock || row.STOCK || 0);
+                        let category = row.Category || row.category || row.CATEGORY || 'Uncategorized';
+                        
+                        description = String(description).trim();
+                        unit = String(unit).trim();
+                        category = String(category).trim();
+                        
+                        if (!description || description === '') {
+                            skippedCount++;
+                            continue;
+                        }
+                        
+                        if (isNaN(stock)) stock = 0;
+                        
+                        console.log(`Processing ${i+1}: ${description} - ${category}`);
+                        
+                        let categoryId = null;
+                        const existingCat = categories.find(c => c.name.toLowerCase() === category.toLowerCase());
+                        
+                        if (existingCat) {
+                            categoryId = existingCat.id;
+                        } else {
+                            try {
+                                const catResponse = await fetch('/api/categories', { 
+                                    method: 'POST', 
+                                    headers: {'Content-Type': 'application/json'}, 
+                                    body: JSON.stringify({name: category}) 
+                                });
+                                
+                                if (catResponse.ok) {
+                                    await loadCategories();
+                                    const newCat = categories.find(c => c.name.toLowerCase() === category.toLowerCase());
+                                    if (newCat) categoryId = newCat.id;
+                                }
+                            } catch (err) {
+                                console.error('Error creating category:', err);
+                            }
+                        }
+                        
+                        if (categoryId) {
+                            const itemData = { 
+                                description: description, 
+                                unit: unit, 
+                                stock_in: stock, 
+                                category_id: categoryId, 
+                                type: 'accessory' 
+                            };
+                            
+                            try {
+                                const response = await fetch('/api/items', { 
+                                    method: 'POST', 
+                                    headers: {'Content-Type': 'application/json'}, 
+                                    body: JSON.stringify(itemData) 
+                                });
+                                
+                                if (response.ok) {
+                                    successCount++;
+                                    if (successCount % 10 === 0) {
+                                        showToast(`Imported ${successCount} of ${rows.length} items...`, 'info');
+                                    }
+                                } else {
+                                    errorCount++;
+                                    console.error(`Error adding item ${description}`);
+                                }
+                            } catch (err) {
+                                errorCount++;
+                                console.error(`Network error for item ${description}:`, err);
+                            }
+                        } else {
+                            errorCount++;
+                            console.error(`Could not create/find category: ${category}`);
+                        }
+                        
+                        if (i % 5 === 0) {
+                            await new Promise(resolve => setTimeout(resolve, 10));
+                        }
+                    }
+                    
+                    await loadAllData();
+                    
+                    let message = `✅ Import completed!\n📦 Success: ${successCount} items\n❌ Errors: ${errorCount} items`;
+                    if (skippedCount > 0) {
+                        message += `\n⚠️ Skipped: ${skippedCount} empty rows`;
+                    }
+                    
+                    showToast(message, errorCount > 0 ? 'warning' : 'success');
+                    
+                    if (currentItemType === 'tool') {
+                        updateToolsTable();
+                    } else {
+                        filterAndDisplayItems();
+                    }
+                    
+                } catch (error) {
+                    console.error('Import error:', error);
+                    showToast('Error processing Excel file: ' + error.message, 'error');
+                } finally {
+                    input.value = '';
+                }
+            };
+            
+            reader.onerror = function() {
+                showToast('Error reading file', 'error');
+                input.value = '';
+            };
+            
+            reader.readAsArrayBuffer(file);
+        }
+        
+        function filterByCategory(category, type) { currentCategoryFilter = category; currentItemType = type; document.querySelectorAll('.sub-menu-item').forEach(el => el.classList.remove('active-category')); if (category !== 'all' && event && event.currentTarget) event.currentTarget.classList.add('active-category'); showSection('inventory'); filterAndDisplayItems(); }
+        
+        function showToolsSection() { currentItemType = 'tool'; document.getElementById('dashboardSection').style.display = 'none'; document.getElementById('inventorySection').style.display = 'none'; document.getElementById('toolsSection').style.display = 'block'; document.getElementById('reportsSection').style.display = 'none'; document.getElementById('riskSection').style.display = 'none'; document.querySelectorAll('.menu-item').forEach(item => item.classList.remove('active')); if (event && event.currentTarget) event.currentTarget.classList.add('active'); updateToolsTable(); }
+        
+        function showSection(section) { 
+            document.getElementById('dashboardSection').style.display = section === 'dashboard' ? 'block' : 'none'; 
+            document.getElementById('inventorySection').style.display = section === 'inventory' ? 'block' : 'none'; 
+            document.getElementById('toolsSection').style.display = 'none'; 
+            document.getElementById('reportsSection').style.display = section === 'reports' ? 'block' : 'none'; 
+            document.getElementById('riskSection').style.display = section === 'risk' ? 'block' : 'none'; 
+            if (section === 'reports') filterActivities(); 
+            if (section === 'risk') updateRiskItems(); 
+            if (section === 'dashboard') { updateCharts(); updateRecentActivities(); }
+            document.querySelectorAll('.menu-item').forEach(item => item.classList.remove('active'));
+            if (event && event.currentTarget) event.currentTarget.classList.add('active');
+        }
+        
+        function filterItems() { currentFilter = document.getElementById('statusFilter')?.value || 'all'; filterAndDisplayItems(); }
+        function sortItems() { currentSort = document.getElementById('sortSelect')?.value || 'id'; filterAndDisplayItems(); }
+        function toggleSubMenu(menuId) { const menu = document.getElementById(menuId); menu.style.display = menu.style.display === 'none' ? 'block' : 'none'; }
+        function escapeHtml(text) { if (!text) return ''; const div = document.createElement('div'); div.textContent = text; return div.innerHTML; }
+        
+        async function viewItem(id) { 
+            const item = allItems.find(i => i.id === id); 
+            if (item) { 
+                showToast(`<strong>${escapeHtml(item.description)}</strong><br>Stock: ${item.total_stock}<br>Category: ${escapeHtml(item.category)}`, 'info'); 
+            } 
+        }
+        
+        function openAddItemModal(type) { 
+            document.getElementById('itemModalTitle').innerHTML = type === 'accessory' ? 'Add New Accessory' : 'Add New Tool'; 
+            document.getElementById('itemTypeValue').value = type; 
+            document.getElementById('itemForm').reset(); 
+            document.getElementById('itemId').value = ''; 
+            document.getElementById('stockInGroup').style.display = 'block'; 
+            document.getElementById('itemModal').style.display = 'flex'; 
+        }
+        
+        async function editItem(id) { 
+            const item = allItems.find(i => i.id === id); 
+            if (item) { 
+                document.getElementById('itemModalTitle').innerHTML = 'Edit Item'; 
+                document.getElementById('itemId').value = item.id; 
+                document.getElementById('itemDescription').value = item.description; 
+                document.getElementById('itemUnit').value = item.unit; 
+                document.getElementById('itemCategory').value = item.category_id; 
+                document.getElementById('itemTypeValue').value = item.type; 
+                document.getElementById('stockInGroup').style.display = 'none'; 
+                document.getElementById('itemModal').style.display = 'flex'; 
+            } 
+        }
+        
+        function openAddCategoryModal() { document.getElementById('categoryModal').style.display = 'flex'; updateCategoriesList(); }
+        function openStockModal(id, action) { document.getElementById('stockItemId').value = id; document.getElementById('stockAction').value = action; document.getElementById('stockModalTitle').innerHTML = action === 'in' ? 'Stock In' : 'Stock Out'; document.getElementById('stockForm').reset(); document.getElementById('stockModal').style.display = 'flex'; }
+        function closeModal(modalId) { document.getElementById(modalId).style.display = 'none'; }
+        
+        function showToast(message, type = 'success') { 
+            const container = document.getElementById('toastContainer'); 
+            const toast = document.createElement('div'); 
+            toast.className = `toast ${type}`; 
+            toast.innerHTML = `<div class="toast-header"><i class="fas ${type === 'success' ? 'fa-check-circle' : 'fa-info-circle'}" style="color: ${type === 'success' ? '#28a745' : '#17a2b8'}"></i><strong>${type.toUpperCase()}</strong></div><div class="toast-body">${message}</div>`; 
+            container.appendChild(toast); 
+            setTimeout(() => toast.remove(), 3000); 
+        }
+        
+        document.getElementById('itemForm').addEventListener('submit', async (e) => { 
+            e.preventDefault(); 
+            const id = document.getElementById('itemId').value; 
+            const itemType = document.getElementById('itemTypeValue').value; 
+            const data = { description: document.getElementById('itemDescription').value, unit: document.getElementById('itemUnit').value, category_id: parseInt(document.getElementById('itemCategory').value), type: itemType }; 
+            if (!id) { 
+                data.stock_in = parseInt(document.getElementById('itemStockIn').value); 
+                const response = await fetch('/api/items', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }); 
+                if (response.ok) { showToast('Item added successfully!'); await loadAllData(); closeModal('itemModal'); } 
+                else showToast('Error adding item', 'error'); 
+            } else { 
+                const response = await fetch(`/api/items/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }); 
+                if (response.ok) { showToast('Item updated successfully!'); await loadAllData(); closeModal('itemModal'); } 
+                else showToast('Error updating item', 'error'); 
+            } 
+        });
+        
+        document.getElementById('stockForm').addEventListener('submit', async (e) => { 
+            e.preventDefault(); 
+            const itemId = parseInt(document.getElementById('stockItemId').value); 
+            const action = document.getElementById('stockAction').value; 
+            const quantity = parseInt(document.getElementById('stockQuantity').value); 
+            const notes = document.getElementById('stockNotes').value; 
+            const response = await fetch(`/api/items/${itemId}/stock`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, quantity, notes }) }); 
+            if (response.ok) { 
+                const result = await response.json(); 
+                showToast(result.message); 
+                await loadAllData(); 
+                closeModal('stockModal'); 
+            } else { 
+                const error = await response.json(); 
+                showToast(error.error || 'Error updating stock', 'error'); 
+            } 
+        });
+        
+        window.onclick = function(event) { if (event.target.classList.contains('modal')) event.target.style.display = 'none'; }
+        
+        loadAllData().then(() => {
+            setTimeout(() => { 
+                if (document.querySelector('.menu-item')) {
+                    document.querySelector('.menu-item').click(); 
+                }
+            }, 100);
+        });
+    </script>
+</body>
+</html>
