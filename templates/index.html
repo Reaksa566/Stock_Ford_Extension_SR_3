@@ -963,76 +963,143 @@
         }
         
         async function importExcel(input) {
-            const file = input.files[0];
-            if (!file) return;
+    const file = input.files[0];
+    if (!file) return;
+    
+    showToast('Reading Excel file...', 'info');
+    
+    const reader = new FileReader();
+    reader.onload = async function(e) {
+        try {
+            const data = new Uint8Array(e.target.result);
+            const workbook = XLSX.read(data, {type: 'array'});
+            const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+            const rows = XLSX.utils.sheet_to_json(firstSheet);
             
-            showToast('Reading Excel file...', 'info');
+            if (!rows || rows.length === 0) {
+                showToast('No data found in Excel file', 'error');
+                return;
+            }
             
-            const reader = new FileReader();
-            reader.onload = async function(e) {
-                try {
-                    const data = new Uint8Array(e.target.result);
-                    const workbook = XLSX.read(data, {type: 'array'});
-                    const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-                    const rows = XLSX.utils.sheet_to_json(firstSheet);
-                    
-                    if (!rows || rows.length === 0) {
-                        showToast('No data found in Excel file', 'error');
-                        return;
+            showToast(`Found ${rows.length} items. Processing...`, 'info');
+            
+            // Step 1: Extract unique categories and create them first
+            const uniqueCategories = [...new Set(rows.map(row => {
+                let cat = row.Category || row.category || row.CATEGORY || 'Uncategorized';
+                return String(cat).trim();
+            }))];
+            
+            showToast(`Creating ${uniqueCategories.length} categories...`, 'info');
+            
+            for (const cat of uniqueCategories) {
+                const existingCat = categories.find(c => c.name.toLowerCase() === cat.toLowerCase());
+                if (!existingCat) {
+                    try {
+                        await fetch('/api/categories', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ name: cat })
+                        });
+                    } catch (err) {
+                        console.error('Error creating category:', cat, err);
                     }
-                    
-                    let successCount = 0, errorCount = 0, skippedCount = 0;
-                    showToast(`Found ${rows.length} items to import. Starting import...`, 'info');
-                    
-                    for (let i = 0; i < rows.length; i++) {
-                        const row = rows[i];
-                        let description = row.Description || row.description || row.DESCRIPTION || '';
-                        let unit = row.Unit || row.unit || row.UNIT || 'pcs';
-                        let stock = parseInt(row.Stock || row.stock || row.STOCK || 0);
-                        let category = row.Category || row.category || row.CATEGORY || 'Uncategorized';
-                        
-                        description = String(description).trim();
-                        unit = String(unit).trim();
-                        category = String(category).trim();
-                        
-                        if (!description || description === '') { skippedCount++; continue; }
-                        if (isNaN(stock)) stock = 0;
-                        
-                        let categoryId = null;
-                        const existingCat = categories.find(c => c.name.toLowerCase() === category.toLowerCase());
-                        
-                        if (existingCat) {
-                            categoryId = existingCat.id;
-                        } else {
-                            try {
-                                const catResponse = await fetch('/api/categories', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name: category}) });
-                                if (catResponse.ok) {
-                                    await loadCategories();
-                                    const newCat = categories.find(c => c.name.toLowerCase() === category.toLowerCase());
-                                    if (newCat) categoryId = newCat.id;
-                                }
-                            } catch (err) { console.error('Error creating category:', err); }
-                        }
-                        
-                        if (categoryId) {
-                            const itemData = { description, unit, stock_in: stock, category_id: categoryId, type: 'accessory' };
-                            const response = await fetch('/api/items', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(itemData) });
-                            if (response.ok) successCount++; else errorCount++;
-                        } else errorCount++;
-                        
-                        if (i % 5 === 0) await new Promise(resolve => setTimeout(resolve, 10));
-                    }
-                    
-                    await loadAllData();
-                    showToast(`Import completed! ✅ ${successCount} added, ❌ ${errorCount} failed`, errorCount > 0 ? 'warning' : 'success');
-                    input.value = '';
-                } catch (error) {
-                    showToast('Error processing Excel file: ' + error.message, 'error');
-                    input.value = '';
                 }
-            };
-            reader.readAsArrayBuffer(file);
+            }
+            
+            // Reload categories after creation
+            await loadCategories();
+            
+            // Step 2: Prepare all items for batch import
+            const itemsToImport = [];
+            let skippedCount = 0;
+            
+            for (const row of rows) {
+                let description = row.Description || row.description || row.DESCRIPTION || '';
+                let unit = row.Unit || row.unit || row.UNIT || 'pcs';
+                let stock = parseInt(row.Stock || row.stock || row.STOCK || 0);
+                let category = row.Category || row.category || row.CATEGORY || 'Uncategorized';
+                
+                description = String(description).trim();
+                unit = String(unit).trim();
+                category = String(category).trim();
+                
+                if (!description || description === '') {
+                    skippedCount++;
+                    continue;
+                }
+                
+                if (isNaN(stock)) stock = 0;
+                
+                const existingCat = categories.find(c => c.name.toLowerCase() === category.toLowerCase());
+                if (existingCat) {
+                    itemsToImport.push({
+                        description,
+                        unit,
+                        stock_in: stock,
+                        category_id: existingCat.id,
+                        type: 'accessory'
+                    });
+                } else {
+                    skippedCount++;
+                }
+            }
+            
+            showToast(`Importing ${itemsToImport.length} items in batches...`, 'info');
+            
+            // Step 3: Import items in batches of 50 for better performance
+            let successCount = 0;
+            let errorCount = 0;
+            const batchSize = 50;
+            
+            for (let i = 0; i < itemsToImport.length; i += batchSize) {
+                const batch = itemsToImport.slice(i, i + batchSize);
+                const promises = batch.map(itemData => 
+                    fetch('/api/items', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(itemData)
+                    })
+                );
+                
+                const results = await Promise.all(promises);
+                for (const result of results) {
+                    if (result.ok) successCount++;
+                    else errorCount++;
+                }
+                
+                showToast(`Imported ${Math.min(i + batchSize, itemsToImport.length)} of ${itemsToImport.length} items...`, 'info');
+            }
+            
+            await loadAllData();
+            
+            let message = `✅ Import completed!\n📦 Success: ${successCount} items\n❌ Errors: ${errorCount} items`;
+            if (skippedCount > 0) {
+                message += `\n⚠️ Skipped: ${skippedCount} items (empty or invalid)`;
+            }
+            
+            showToast(message, errorCount > 0 ? 'warning' : 'success');
+            
+            if (currentItemType === 'tool') {
+                updateToolsTable();
+            } else {
+                filterAndDisplayItems();
+            }
+            
+        } catch (error) {
+            console.error('Import error:', error);
+            showToast('Error processing Excel file: ' + error.message, 'error');
+        } finally {
+            input.value = '';
         }
+    };
+    
+    reader.onerror = function() {
+        showToast('Error reading file', 'error');
+        input.value = '';
+    };
+    
+    reader.readAsArrayBuffer(file);
+}
         
         function filterByCategory(category, type) { 
             currentCategoryFilter = category; 

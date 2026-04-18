@@ -7,15 +7,19 @@ import hashlib
 DB_PATH = 'stock_data.db'
 
 def hash_password(password):
-    """Hash password using SHA-256"""
     return hashlib.sha256(password.encode()).hexdigest()
 
 def init_db():
-    """Initialize the database with tables if they don't exist"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
-    # Create users table (for login)
+    # Enable WAL mode for better concurrent performance
+    cursor.execute('PRAGMA journal_mode=WAL')
+    cursor.execute('PRAGMA synchronous=NORMAL')
+    cursor.execute('PRAGMA cache_size=-20000')  # 20MB cache
+    cursor.execute('PRAGMA temp_store=MEMORY')
+    
+    # Create users table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -26,7 +30,7 @@ def init_db():
         )
     ''')
     
-    # Create categories table (if not exists)
+    # Create categories table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS categories (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -34,7 +38,7 @@ def init_db():
         )
     ''')
     
-    # Create items table (if not exists)
+    # Create items table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS items (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -48,7 +52,7 @@ def init_db():
         )
     ''')
     
-    # Create activities table (if not exists)
+    # Create activities table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS activities (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -63,23 +67,29 @@ def init_db():
         )
     ''')
     
-    # Check if default admin user exists
+    # Create indexes for faster queries
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_items_category ON items(category_id)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_items_type ON items(type)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_activities_date ON activities(date)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_items_description ON items(description)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_items_category_type ON items(category_id, type)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_items_stock ON items(stock_in, stock_out)')
+    
+    # Create default admin user
     cursor.execute('SELECT COUNT(*) FROM users WHERE username = ?', ('admin',))
     admin_exists = cursor.fetchone()[0]
     
     if admin_exists == 0:
-        # Insert default admin user (password: admin123)
         default_password = hash_password('admin123')
         cursor.execute('INSERT INTO users (username, password, role) VALUES (?, ?, ?)', 
                       ('admin', default_password, 'admin'))
         print("Default admin user created: username='admin', password='admin123'")
     
-    # Check if categories table is empty before inserting default categories
+    # Create default categories
     cursor.execute('SELECT COUNT(*) FROM categories')
     count = cursor.fetchone()[0]
     
     if count == 0:
-        # Insert default categories only if no categories exist
         default_categories = ['LV', 'ELV', 'MVAC', 'Plumbing', 'Fire Fighting', 'Air Compressor']
         for cat in default_categories:
             try:
@@ -92,7 +102,6 @@ def init_db():
     print("Database initialized successfully!")
 
 def authenticate_user(username, password):
-    """Authenticate user"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     hashed_password = hash_password(password)
@@ -106,7 +115,6 @@ def authenticate_user(username, password):
     return None
 
 def add_user(username, password, role='user'):
-    """Add a new user"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     try:
@@ -118,13 +126,9 @@ def add_user(username, password, role='user'):
     except sqlite3.IntegrityError:
         success = False
     conn.close()
-    
-    if success:
-        sync_db_to_github()
     return success
 
 def get_users():
-    """Get all users"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute('SELECT id, username, role, created_at FROM users')
@@ -133,16 +137,13 @@ def get_users():
     return [{'id': u[0], 'username': u[1], 'role': u[2], 'created_at': u[3]} for u in users]
 
 def delete_user(user_id):
-    """Delete a user"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute('DELETE FROM users WHERE id = ? AND username != ?', (user_id, 'admin'))
     conn.commit()
     conn.close()
-    sync_db_to_github()
 
 def get_categories():
-    """Get all categories"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute('SELECT id, name FROM categories ORDER BY name')
@@ -151,7 +152,6 @@ def get_categories():
     return [{'id': cat[0], 'name': cat[1]} for cat in categories]
 
 def add_category(name):
-    """Add a new category"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     try:
@@ -161,14 +161,9 @@ def add_category(name):
     except sqlite3.IntegrityError:
         success = False
     conn.close()
-    
-    if success:
-        sync_db_to_github()
-    
     return success
 
 def get_items():
-    """Get all items with category names and total stock"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute('''
@@ -196,7 +191,6 @@ def get_items():
     return result
 
 def add_item(description, unit, stock_in, category_id, item_type='accessory'):
-    """Add a new item with type specification"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute('''
@@ -206,12 +200,9 @@ def add_item(description, unit, stock_in, category_id, item_type='accessory'):
     conn.commit()
     item_id = cursor.lastrowid
     conn.close()
-    
-    sync_db_to_github()
     return item_id
 
 def update_item(item_id, description, unit, category_id):
-    """Update item details"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute('''
@@ -221,10 +212,8 @@ def update_item(item_id, description, unit, category_id):
     ''', (description, unit, category_id, item_id))
     conn.commit()
     conn.close()
-    sync_db_to_github()
 
 def update_stock(item_id, quantity_change):
-    """Update stock (positive for stock in, negative for stock out)"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
@@ -235,20 +224,16 @@ def update_stock(item_id, quantity_change):
     
     conn.commit()
     conn.close()
-    sync_db_to_github()
 
 def delete_item(item_id):
-    """Delete an item"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute('DELETE FROM activities WHERE item_id = ?', (item_id,))
     cursor.execute('DELETE FROM items WHERE id = ?', (item_id,))
     conn.commit()
     conn.close()
-    sync_db_to_github()
 
 def get_item_stock(item_id):
-    """Get current total stock of an item"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute('SELECT stock_in, stock_out FROM items WHERE id = ?', (item_id,))
@@ -259,7 +244,6 @@ def get_item_stock(item_id):
     return 0
 
 def add_activity(item_id, item_name, action, quantity, notes=''):
-    """Log stock activity"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     now = datetime.now()
@@ -271,7 +255,6 @@ def add_activity(item_id, item_name, action, quantity, notes=''):
     conn.close()
 
 def get_activities(start_date=None, end_date=None):
-    """Get activities with optional date filter"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
@@ -302,7 +285,6 @@ def get_activities(start_date=None, end_date=None):
     return result
 
 def get_items_by_type(item_type):
-    """Get items filtered by type (accessory or tool)"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute('''
@@ -330,7 +312,6 @@ def get_items_by_type(item_type):
     return result
 
 def get_items_by_category(category_name):
-    """Get items filtered by category"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute('''
@@ -359,7 +340,6 @@ def get_items_by_category(category_name):
     return result
 
 def get_risk_items(threshold=10):
-    """Get items with stock below threshold"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute('''
@@ -386,7 +366,6 @@ def get_risk_items(threshold=10):
     return result
 
 def get_dashboard_stats():
-    """Get statistics for dashboard"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
@@ -417,10 +396,8 @@ def get_dashboard_stats():
     }
 
 def update_item_type(item_id, item_type):
-    """Update item type (accessory/tool)"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute('UPDATE items SET type = ? WHERE id = ?', (item_type, item_id))
     conn.commit()
     conn.close()
-    sync_db_to_github()

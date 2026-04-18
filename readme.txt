@@ -13,5 +13,5 @@ git push origin main
 
 
 git add .
-git commit -m "Add login system and mobile responsive UI"
+git commit -m "Optimize import speed and add caching"
 git push origin main

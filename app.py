@@ -1,15 +1,37 @@
-from flask import Flask, render_template, request, jsonify, session, redirect, url_for
+from flask import Flask, render_template, request, jsonify, session
 from flask_cors import CORS
 import database
 import sqlite3
 from github_sync import sync_db_from_github, sync_db_to_github
 import atexit
 from functools import wraps
+from datetime import datetime
+import time
 
 app = Flask(__name__)
 app.secret_key = 'your-secret-key-change-this-in-production-2024'
 CORS(app)
 
+# ============ SIMPLE CACHE ============
+cache = {}
+cache_timeout = 30  # 30 seconds
+
+def get_cached(key, fetch_func):
+    """Get data from cache or fetch if expired"""
+    if key in cache:
+        data, timestamp = cache[key]
+        if time.time() - timestamp < cache_timeout:
+            return data
+    data = fetch_func()
+    cache[key] = (data, time.time())
+    return data
+
+def invalidate_cache():
+    """Clear all cache"""
+    cache.clear()
+    print("🔄 Cache invalidated")
+
+# ============ AUTH DECORATORS ============
 def login_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
@@ -26,6 +48,7 @@ def admin_required(f):
         return f(*args, **kwargs)
     return decorated_function
 
+# ============ INITIALIZATION ============
 print("=" * 50)
 print("🔄 Checking for existing database on GitHub...")
 sync_db_from_github()
@@ -34,6 +57,7 @@ print("=" * 50)
 atexit.register(sync_db_to_github)
 database.init_db()
 
+# ============ ROUTES ============
 @app.route('/')
 def index():
     if 'user_id' in session:
@@ -60,6 +84,7 @@ def login():
 @app.route('/logout', methods=['POST'])
 def logout():
     session.clear()
+    invalidate_cache()
     return jsonify({'success': True, 'message': 'Logged out successfully'})
 
 @app.route('/api/check-auth', methods=['GET'])
@@ -68,42 +93,12 @@ def check_auth():
         return jsonify({'authenticated': True, 'username': session['username'], 'role': session['role']})
     return jsonify({'authenticated': False})
 
-@app.route('/api/users', methods=['GET'])
-@login_required
-@admin_required
-def get_users():
-    users = database.get_users()
-    return jsonify(users)
-
-@app.route('/api/users', methods=['POST'])
-@login_required
-@admin_required
-def add_user():
-    data = request.json
-    username = data.get('username', '').strip()
-    password = data.get('password', '').strip()
-    role = data.get('role', 'user')
-    
-    if not username or not password:
-        return jsonify({'error': 'Username and password required'}), 400
-    
-    if database.add_user(username, password, role):
-        return jsonify({'message': 'User added successfully'})
-    else:
-        return jsonify({'error': 'Username already exists'}), 400
-
-@app.route('/api/users/<int:user_id>', methods=['DELETE'])
-@login_required
-@admin_required
-def delete_user(user_id):
-    database.delete_user(user_id)
-    return jsonify({'message': 'User deleted successfully'})
-
 @app.route('/api/categories', methods=['GET'])
 @login_required
 def get_categories():
-    categories = database.get_categories()
-    return jsonify(categories)
+    def fetch():
+        return database.get_categories()
+    return jsonify(get_cached('categories', fetch))
 
 @app.route('/api/categories', methods=['POST'])
 @login_required
@@ -114,63 +109,17 @@ def add_category():
         return jsonify({'error': 'Category name is required'}), 400
     
     if database.add_category(name):
+        invalidate_cache()
         return jsonify({'message': 'Category added successfully'})
     else:
         return jsonify({'error': 'Category already exists'}), 400
 
-@app.route('/api/categories/<int:category_id>', methods=['PUT'])
-@login_required
-def update_category(category_id):
-    data = request.json
-    new_name = data.get('name', '').strip()
-    
-    if not new_name:
-        return jsonify({'error': 'Category name is required'}), 400
-    
-    conn = sqlite3.connect(database.DB_PATH)
-    cursor = conn.cursor()
-    try:
-        cursor.execute('UPDATE categories SET name = ? WHERE id = ?', (new_name, category_id))
-        conn.commit()
-        success = True
-    except sqlite3.IntegrityError:
-        success = False
-    finally:
-        conn.close()
-    
-    if success:
-        database.sync_db_to_github()
-        return jsonify({'message': 'Category updated successfully'})
-    else:
-        return jsonify({'error': 'Category name already exists'}), 400
-
-@app.route('/api/categories/<int:category_id>', methods=['DELETE'])
-@login_required
-def delete_category(category_id):
-    conn = sqlite3.connect(database.DB_PATH)
-    cursor = conn.cursor()
-    
-    try:
-        cursor.execute('UPDATE items SET category_id = NULL WHERE category_id = ?', (category_id,))
-        cursor.execute('DELETE FROM categories WHERE id = ?', (category_id,))
-        conn.commit()
-        success = True
-    except Exception as e:
-        success = False
-    finally:
-        conn.close()
-    
-    if success:
-        database.sync_db_to_github()
-        return jsonify({'message': 'Category deleted successfully'})
-    else:
-        return jsonify({'error': 'Error deleting category'}), 400
-
 @app.route('/api/items', methods=['GET'])
 @login_required
 def get_items():
-    items = database.get_items()
-    return jsonify(items)
+    def fetch():
+        return database.get_items()
+    return jsonify(get_cached('items', fetch))
 
 @app.route('/api/items', methods=['POST'])
 @login_required
@@ -187,8 +136,74 @@ def add_item():
     
     item_id = database.add_item(description, unit, stock_in, category_id, item_type)
     database.add_activity(item_id, description, 'create', stock_in, 'Item created')
+    invalidate_cache()
     
     return jsonify({'message': 'Item added successfully', 'id': item_id})
+
+# ============ BATCH API FOR FAST IMPORT ============
+@app.route('/api/items/batch', methods=['POST'])
+@login_required
+def add_items_batch():
+    """Add multiple items in one request - MUCH FASTER for large imports"""
+    data = request.json
+    items = data.get('items', [])
+    
+    if not items:
+        return jsonify({'error': 'No items provided'}), 400
+    
+    conn = sqlite3.connect(database.DB_PATH)
+    cursor = conn.cursor()
+    
+    success_count = 0
+    error_count = 0
+    item_ids = []
+    
+    for item_data in items:
+        try:
+            description = item_data.get('description', '').strip()
+            unit = item_data.get('unit', '').strip()
+            stock_in = int(item_data.get('stock_in', 0))
+            category_id = item_data.get('category_id')
+            item_type = item_data.get('type', 'accessory')
+            
+            if not description or not unit or not category_id:
+                error_count += 1
+                continue
+            
+            cursor.execute('''
+                INSERT INTO items (description, unit, stock_in, stock_out, category_id, type)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (description, unit, stock_in, 0, category_id, item_type))
+            
+            item_ids.append(cursor.lastrowid)
+            success_count += 1
+            
+        except Exception as e:
+            error_count += 1
+            print(f"Error adding item: {e}")
+    
+    conn.commit()
+    
+    # Add activities for each item
+    now = datetime.now()
+    for idx, item_id in enumerate(item_ids):
+        item_data = items[idx]
+        cursor.execute('''
+            INSERT INTO activities (item_id, item_name, action, quantity, notes, date, time)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (item_id, item_data.get('description'), 'create', item_data.get('stock_in', 0), 
+              'Batch import', now.strftime('%Y-%m-%d'), now.strftime('%H:%M:%S')))
+    
+    conn.commit()
+    conn.close()
+    
+    invalidate_cache()
+    
+    return jsonify({
+        'success': success_count,
+        'error': error_count,
+        'message': f'Added {success_count} items, {error_count} failed'
+    })
 
 @app.route('/api/items/<int:item_id>', methods=['PUT'])
 @login_required
@@ -205,6 +220,7 @@ def update_item(item_id):
     old_item = next((item for item in old_items if item['id'] == item_id), None)
     
     database.update_item(item_id, description, unit, category_id)
+    invalidate_cache()
     
     if old_item:
         database.add_activity(item_id, description, 'update', 0, f'Updated from {old_item["description"]}')
@@ -241,6 +257,7 @@ def update_stock(item_id):
         if item:
             database.add_activity(item_id, item['description'], 'out', quantity, notes)
     
+    invalidate_cache()
     return jsonify({'message': message, 'new_stock': new_stock})
 
 @app.route('/api/items/<int:item_id>', methods=['DELETE'])
@@ -250,6 +267,7 @@ def delete_item(item_id):
     item = next((i for i in items if i['id'] == item_id), None)
     
     database.delete_item(item_id)
+    invalidate_cache()
     
     if item:
         database.add_activity(item_id, item['description'], 'delete', 0, 'Item deleted')
@@ -302,6 +320,7 @@ def update_item_type(item_id):
     item = next((i for i in items if i['id'] == item_id), None)
     
     database.update_item_type(item_id, item_type)
+    invalidate_cache()
     
     if item:
         database.add_activity(item_id, item['description'], 'update_type', 0, f'Type changed to {item_type}')
@@ -344,4 +363,4 @@ def get_category_stats():
     return jsonify(category_stats)
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+    app.run(debug=False, port=5000)
