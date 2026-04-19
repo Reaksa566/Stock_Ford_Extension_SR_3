@@ -1,15 +1,206 @@
-from github_sync import sync_db_to_github
+from github_sync import sync_db_to_github, sync_db_from_github
 import sqlite3
 import os
 from datetime import datetime
 import hashlib
+import base64
+import requests
 
 DB_PATH = 'stock_data.db'
+GITHUB_TOKEN = os.environ.get('GITHUB_TOKEN')
+REPO_NAME = "Reaksa566/Stock_Ford_Extension_SR_3"
+GITHUB_API_URL = f"https://api.github.com/repos/{REPO_NAME}/contents/{DB_PATH}"
 
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
+def is_valid_database(filepath):
+    """Check if file is a valid SQLite database"""
+    if not os.path.exists(filepath):
+        return False
+    
+    try:
+        # Check magic bytes
+        with open(filepath, 'rb') as f:
+            header = f.read(16)
+            if header[:16] != b'SQLite format 3\x00':
+                print(f"⚠️ Invalid database header: {header[:16]}")
+                return False
+        
+        # Try to open and query
+        conn = sqlite3.connect(filepath)
+        cursor = conn.cursor()
+        cursor.execute('SELECT name FROM sqlite_master WHERE type="table" LIMIT 1')
+        cursor.fetchone()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"⚠️ Database validation failed: {e}")
+        return False
+
+def download_valid_db_from_github():
+    """Download database only if it's valid and non-zero"""
+    if not GITHUB_TOKEN:
+        print("⚠️ No GitHub token found, skipping download")
+        return False
+    
+    try:
+        headers = {
+            'Authorization': f'token {GITHUB_TOKEN}',
+            'Accept': 'application/vnd.github.v3+json'
+        }
+        
+        response = requests.get(GITHUB_API_URL, headers=headers)
+        
+        if response.status_code == 200:
+            data = response.json()
+            content = base64.b64decode(data['content'])
+            
+            if len(content) == 0:
+                print("⚠️ GitHub database is empty (0 bytes), ignoring")
+                return False
+            
+            # Save to temp file for validation
+            temp_path = DB_PATH + '.temp'
+            with open(temp_path, 'wb') as f:
+                f.write(content)
+            
+            if is_valid_database(temp_path):
+                # Replace current database with valid one
+                if os.path.exists(DB_PATH):
+                    # Backup current database
+                    backup_path = f"{DB_PATH}.backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                    os.rename(DB_PATH, backup_path)
+                    print(f"📦 Backed up current database to {backup_path}")
+                
+                os.rename(temp_path, DB_PATH)
+                print(f"✅ Valid database downloaded: {len(content)} bytes")
+                return True
+            else:
+                print("⚠️ Downloaded database is corrupted, keeping current")
+                os.remove(temp_path)
+                return False
+        elif response.status_code == 404:
+            print("ℹ️ No database file on GitHub yet")
+            return False
+        else:
+            print(f"❌ GitHub API error: {response.status_code}")
+            return False
+            
+    except Exception as e:
+        print(f"❌ Error downloading from GitHub: {e}")
+        return False
+
+def upload_db_to_github_with_sha():
+    """Upload database with proper SHA handling"""
+    if not GITHUB_TOKEN:
+        print("⚠️ No GitHub token found, skipping sync")
+        return False
+    
+    if not os.path.exists(DB_PATH):
+        print("⚠️ Database file not found, skipping sync")
+        return False
+    
+    if not is_valid_database(DB_PATH):
+        print("⚠️ Local database is corrupted, skipping sync")
+        return False
+    
+    try:
+        with open(DB_PATH, 'rb') as f:
+            content = f.read()
+        
+        if len(content) == 0:
+            print("⚠️ Database is empty, skipping sync")
+            return False
+        
+        encoded_content = base64.b64encode(content).decode('utf-8')
+        
+        headers = {
+            'Authorization': f'token {GITHUB_TOKEN}',
+            'Accept': 'application/vnd.github.v3+json'
+        }
+        
+        # First, check if file exists to get SHA
+        response = requests.get(GITHUB_API_URL, headers=headers)
+        
+        payload = {
+            'message': f'Auto-sync database from Render - {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}',
+            'content': encoded_content,
+            'branch': 'main'
+        }
+        
+        if response.status_code == 200:
+            # File exists, update with SHA
+            current_data = response.json()
+            payload['sha'] = current_data['sha']
+            print("📝 Updating existing database file on GitHub")
+            
+            # Make sure we don't overwrite with older data
+            if current_data.get('size', 0) > len(content):
+                print(f"⚠️ GitHub database ({current_data['size']} bytes) is larger than local ({len(content)} bytes)")
+                print("⚠️ This might indicate data loss! Skipping sync to preserve GitHub data.")
+                return False
+            
+        else:
+            print("📝 Creating new database file on GitHub")
+        
+        # Upload
+        if payload.get('sha') or response.status_code == 404:
+            response = requests.put(GITHUB_API_URL, headers=headers, json=payload)
+            
+            if response.status_code in [200, 201]:
+                print(f"✅ Database synced to GitHub successfully! ({len(content)} bytes)")
+                return True
+            else:
+                print(f"❌ GitHub API error: {response.status_code} - {response.text}")
+                return False
+        else:
+            return False
+            
+    except Exception as e:
+        print(f"❌ Error syncing to GitHub: {e}")
+        return False
+
 def init_db():
+    """Initialize database with proper validation and backup"""
+    print("=" * 50)
+    print("🔄 Initializing Database...")
+    
+    # Check if local database exists and is valid
+    if os.path.exists(DB_PATH):
+        if is_valid_database(DB_PATH):
+            print("✅ Existing valid database found")
+            
+            # Get database info
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM items")
+            item_count = cursor.fetchone()[0]
+            cursor.execute("SELECT COUNT(*) FROM users")
+            user_count = cursor.fetchone()[0]
+            conn.close()
+            
+            print(f"📊 Database contains: {item_count} items, {user_count} users")
+            
+            # Ask if we should sync with GitHub (optional)
+            if GITHUB_TOKEN:
+                print("🔄 Syncing with GitHub...")
+                download_valid_db_from_github()
+            
+            return
+    
+    # If no valid local database, try to download from GitHub
+    print("📥 No valid local database found, checking GitHub...")
+    if download_valid_db_from_github():
+        print("✅ Database restored from GitHub")
+        return
+    
+    # Create new database as last resort
+    print("🆕 Creating new database...")
+    create_fresh_database()
+
+def create_fresh_database():
+    """Create a brand new database"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
@@ -83,7 +274,7 @@ def init_db():
         default_password = hash_password('admin123')
         cursor.execute('INSERT INTO users (username, password, role) VALUES (?, ?, ?)', 
                       ('admin', default_password, 'admin'))
-        print("Default admin user created: username='admin', password='admin123'")
+        print("✅ Default admin user created: username='admin', password='admin123'")
     
     # Create default categories
     cursor.execute('SELECT COUNT(*) FROM categories')
@@ -96,11 +287,22 @@ def init_db():
                 cursor.execute('INSERT INTO categories (name) VALUES (?)', (cat,))
             except sqlite3.IntegrityError:
                 pass
+        print(f"✅ Created {len(default_categories)} default categories")
     
     conn.commit()
     conn.close()
-    print("Database initialized successfully!")
+    print("✅ Database initialized successfully!")
 
+# Replace old sync functions with new ones
+def sync_db_to_github():
+    """Wrapper for the new upload function"""
+    return upload_db_to_github_with_sha()
+
+def sync_db_from_github():
+    """Wrapper for the new download function"""
+    return download_valid_db_from_github()
+
+# Rest of your existing functions remain the same
 def authenticate_user(username, password):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()

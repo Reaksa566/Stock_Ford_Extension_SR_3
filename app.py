@@ -7,9 +7,10 @@ import atexit
 from functools import wraps
 from datetime import datetime
 import time
+import os
 
 app = Flask(__name__)
-app.secret_key = 'your-secret-key-change-this-in-production-2024'
+app.secret_key = os.environ.get('SECRET_KEY', 'your-secret-key-change-this-in-production-2024')
 CORS(app)
 
 # ============ SIMPLE CACHE ============
@@ -50,12 +51,39 @@ def admin_required(f):
 
 # ============ INITIALIZATION ============
 print("=" * 50)
-print("🔄 Checking for existing database on GitHub...")
-sync_db_from_github()
-print("=" * 50)
+print("🚀 Starting Stock Management System...")
 
+# FIRST: Initialize local database (creates if doesn't exist)
+try:
+    database.init_db()
+    print("✅ Local database initialized/verified")
+except Exception as e:
+    print(f"❌ Database initialization error: {e}")
+    # Try to recover from backup if exists
+    if os.path.exists('stock_data.db.backup'):
+        import shutil
+        shutil.copy('stock_data.db.backup', 'stock_data.db')
+        print("🔄 Restored from backup")
+        try:
+            database.init_db()
+        except Exception as backup_error:
+            print(f"❌ Backup recovery failed: {backup_error}")
+
+# SECOND: Sync with GitHub (download if GitHub has newer valid data)
+print("=" * 50)
+print("🔄 Syncing with GitHub...")
+try:
+    # This will download from GitHub ONLY if GitHub has valid data
+    # and won't overwrite if local is newer/bigger
+    sync_db_from_github()
+except Exception as e:
+    print(f"⚠️ GitHub sync error (non-critical): {e}")
+
+# THIRD: Register auto-sync on exit
 atexit.register(sync_db_to_github)
-database.init_db()
+print("=" * 50)
+print("✅ System ready!")
+print("=" * 50)
 
 # ============ ROUTES ============
 @app.route('/')
@@ -110,6 +138,8 @@ def add_category():
     
     if database.add_category(name):
         invalidate_cache()
+        # Sync to GitHub after changes
+        sync_db_to_github()
         return jsonify({'message': 'Category added successfully'})
     else:
         return jsonify({'error': 'Category already exists'}), 400
@@ -137,6 +167,9 @@ def add_item():
     item_id = database.add_item(description, unit, stock_in, category_id, item_type)
     database.add_activity(item_id, description, 'create', stock_in, 'Item created')
     invalidate_cache()
+    
+    # Sync to GitHub after changes
+    sync_db_to_github()
     
     return jsonify({'message': 'Item added successfully', 'id': item_id})
 
@@ -199,6 +232,9 @@ def add_items_batch():
     
     invalidate_cache()
     
+    # Sync to GitHub after batch import
+    sync_db_to_github()
+    
     return jsonify({
         'success': success_count,
         'error': error_count,
@@ -224,6 +260,9 @@ def update_item(item_id):
     
     if old_item:
         database.add_activity(item_id, description, 'update', 0, f'Updated from {old_item["description"]}')
+    
+    # Sync to GitHub after changes
+    sync_db_to_github()
     
     return jsonify({'message': 'Item updated successfully'})
 
@@ -258,6 +297,10 @@ def update_stock(item_id):
             database.add_activity(item_id, item['description'], 'out', quantity, notes)
     
     invalidate_cache()
+    
+    # Sync to GitHub after changes
+    sync_db_to_github()
+    
     return jsonify({'message': message, 'new_stock': new_stock})
 
 @app.route('/api/items/<int:item_id>', methods=['DELETE'])
@@ -271,6 +314,9 @@ def delete_item(item_id):
     
     if item:
         database.add_activity(item_id, item['description'], 'delete', 0, 'Item deleted')
+    
+    # Sync to GitHub after changes
+    sync_db_to_github()
     
     return jsonify({'message': 'Item deleted successfully'})
 
@@ -325,6 +371,9 @@ def update_item_type(item_id):
     if item:
         database.add_activity(item_id, item['description'], 'update_type', 0, f'Type changed to {item_type}')
     
+    # Sync to GitHub after changes
+    sync_db_to_github()
+    
     return jsonify({'message': 'Item type updated successfully'})
 
 @app.route('/api/export/items', methods=['GET'])
@@ -363,4 +412,4 @@ def get_category_stats():
     return jsonify(category_stats)
 
 if __name__ == '__main__':
-    app.run(debug=False, port=5000)
+    app.run(debug=False, host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
